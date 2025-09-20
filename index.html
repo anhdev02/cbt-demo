@@ -11,16 +11,22 @@
         import { getFirestore, doc, onSnapshot, collection, query, addDoc, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // Determine if the app is running in a local environment
+        const isLocal = typeof __firebase_config === 'undefined';
+
         // Firebase configuration provided by the environment
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const firebaseConfig = isLocal ? { projectId: 'demo-project-id', apiKey: 'demo-api-key' } : JSON.parse(__firebase_config);
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
         // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
-        setLogLevel('debug');
+        let app, db, auth;
+        if (!isLocal) {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            setLogLevel('debug');
+        }
 
         let userId = null;
 
@@ -33,64 +39,100 @@
         const addTransactionBtn = document.getElementById('add-transaction-btn');
 
         // Authentication and Data Handling
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
+        function onAuthChangeMock(callback) {
+            // Mock authentication for local environment
+            setTimeout(() => {
+                callback({ uid: 'local-user-id' });
+            }, 100);
+        }
+
+        if (isLocal) {
+            onAuthChangeMock((user) => {
                 userId = user.uid;
                 userIdDisplay.textContent = `User ID: ${userId}`;
                 authSection.classList.add('hidden');
                 dashboard.classList.remove('hidden');
-
-                // Set up real-time listeners
                 setupRealtimeListeners(userId);
-            } else {
-                userId = null;
-                authSection.classList.remove('hidden');
-                dashboard.classList.add('hidden');
-            }
-        });
+            });
+        } else {
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    userIdDisplay.textContent = `User ID: ${userId}`;
+                    authSection.classList.add('hidden');
+                    dashboard.classList.remove('hidden');
+                    setupRealtimeListeners(userId);
+                } else {
+                    userId = null;
+                    authSection.classList.remove('hidden');
+                    dashboard.classList.add('hidden');
+                }
+            });
+        }
 
         // Sign in anonymously or with custom token
         async function authenticate() {
-            try {
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
+            if (isLocal) {
+                // In local mode, just show the dashboard
+                const mockUser = { uid: 'local-user-id' };
+                userId = mockUser.uid;
+                userIdDisplay.textContent = `User ID: ${userId}`;
+                authSection.classList.add('hidden');
+                dashboard.classList.remove('hidden');
+                setupRealtimeListeners(userId);
+            } else {
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Error during authentication:", error);
                 }
-            } catch (error) {
-                console.error("Error during authentication:", error);
             }
         }
 
         // Setup Firestore listeners
         function setupRealtimeListeners(currentUserId) {
-            // Wallet balance listener
-            const walletDocPath = `/artifacts/${appId}/users/${currentUserId}/wallets/main`;
-            onSnapshot(doc(db, walletDocPath), (docSnapshot) => {
-                if (docSnapshot.exists()) {
-                    const data = docSnapshot.data();
-                    walletBalanceDisplay.textContent = `$${(data.balance || 0).toFixed(2)}`;
-                } else {
-                    walletBalanceDisplay.textContent = '$0.00';
-                }
-            }, (error) => {
-                console.error("Error fetching wallet balance:", error);
-            });
-
-            // Transactions listener
-            const transactionsCollectionPath = `/artifacts/${appId}/users/${currentUserId}/transactions`;
-            const q = query(collection(db, transactionsCollectionPath));
-            onSnapshot(q, (querySnapshot) => {
-                const transactions = [];
-                querySnapshot.forEach((doc) => {
-                    transactions.push({ id: doc.id, ...doc.data() });
+            if (isLocal) {
+                // Provide mock data for local environment
+                walletBalanceDisplay.textContent = `$${(250.75).toFixed(2)}`;
+                const mockTransactions = [
+                    { id: 'mock-1', date: '2023-10-26', amount: 50.00, status: 'Completed' },
+                    { id: 'mock-2', date: '2023-10-25', amount: -15.50, status: 'Pending' },
+                    { id: 'mock-3', date: '2023-10-24', amount: 120.00, status: 'Completed' },
+                ];
+                renderTransactions(mockTransactions);
+            } else {
+                // Wallet balance listener
+                const walletDocPath = `/artifacts/${appId}/users/${currentUserId}/wallets/main`;
+                onSnapshot(doc(db, walletDocPath), (docSnapshot) => {
+                    if (docSnapshot.exists()) {
+                        const data = docSnapshot.data();
+                        walletBalanceDisplay.textContent = `$${(data.balance || 0).toFixed(2)}`;
+                    } else {
+                        walletBalanceDisplay.textContent = '$0.00';
+                    }
+                }, (error) => {
+                    console.error("Error fetching wallet balance:", error);
                 });
-                // Sort transactions by date descending in JavaScript to avoid index issues
-                transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
-                renderTransactions(transactions);
-            }, (error) => {
-                console.error("Error fetching transactions:", error);
-            });
+
+                // Transactions listener
+                const transactionsCollectionPath = `/artifacts/${appId}/users/${currentUserId}/transactions`;
+                const q = query(collection(db, transactionsCollectionPath));
+                onSnapshot(q, (querySnapshot) => {
+                    const transactions = [];
+                    querySnapshot.forEach((doc) => {
+                        transactions.push({ id: doc.id, ...doc.data() });
+                    });
+                    // Sort transactions by date descending in JavaScript to avoid index issues
+                    transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+                    renderTransactions(transactions);
+                }, (error) => {
+                    console.error("Error fetching transactions:", error);
+                });
+            }
         }
 
         // Render transactions to the table
@@ -121,33 +163,58 @@
                 return;
             }
 
-            const transactionsCollectionPath = `/artifacts/${appId}/users/${userId}/transactions`;
-            const walletDocPath = `/artifacts/${appId}/users/${userId}/wallets/main`;
-
-            const statuses = ['Completed', 'Pending', 'Failed'];
-            const newTransaction = {
-                amount: (Math.random() * 100 - 50),
-                date: new Date().toISOString().slice(0, 10),
-                status: statuses[Math.floor(Math.random() * statuses.length)],
-                type: Math.random() > 0.5 ? 'Deposit' : 'Withdrawal'
-            };
-
-            try {
-                // Use a transaction to update both the wallet balance and transactions
-                await runTransaction(db, async (transaction) => {
-                    // Add the new transaction
-                    const transactionsCollectionRef = collection(db, transactionsCollectionPath);
-                    await addDoc(transactionsCollectionRef, newTransaction);
-                    
-                    // Update the wallet balance
-                    const walletDocRef = doc(db, walletDocPath);
-                    const walletDoc = await transaction.get(walletDocRef);
-                    const currentBalance = walletDoc.exists() ? walletDoc.data().balance : 0;
-                    const newBalance = currentBalance + newTransaction.amount;
-                    transaction.set(walletDocRef, { balance: newBalance });
+            if (isLocal) {
+                // Mock adding a transaction in local mode
+                console.log("Adding mock transaction in local mode.");
+                const mockTx = {
+                    id: 'new-mock-' + Date.now(),
+                    date: new Date().toISOString().slice(0, 10),
+                    amount: (Math.random() * 100 - 50),
+                    status: ['Completed', 'Pending', 'Failed'][Math.floor(Math.random() * 3)],
+                    type: Math.random() > 0.5 ? 'Deposit' : 'Withdrawal'
+                };
+                // Get current transactions and add the new one
+                const currentTransactions = Array.from(transactionsTableBody.querySelectorAll('tr')).map(row => {
+                    return {
+                        id: row.children[0].textContent,
+                        date: row.children[1].textContent,
+                        amount: parseFloat(row.children[2].textContent.substring(1)),
+                        status: row.children[3].textContent
+                    };
                 });
-            } catch (error) {
-                console.error("Error adding transaction or updating wallet:", error);
+                currentTransactions.push(mockTx);
+                renderTransactions(currentTransactions.sort((a, b) => new Date(b.date) - new Date(a.date)));
+                const currentBalance = parseFloat(walletBalanceDisplay.textContent.substring(1));
+                walletBalanceDisplay.textContent = `$${(currentBalance + mockTx.amount).toFixed(2)}`;
+            } else {
+                const transactionsCollectionPath = `/artifacts/${appId}/users/${userId}/transactions`;
+                const walletDocPath = `/artifacts/${appId}/users/${userId}/wallets/main`;
+
+                const statuses = ['Completed', 'Pending', 'Failed'];
+                const newTransaction = {
+                    amount: (Math.random() * 100 - 50),
+                    date: new Date().toISOString().slice(0, 10),
+                    status: statuses[Math.floor(Math.random() * statuses.length)],
+                    type: Math.random() > 0.5 ? 'Deposit' : 'Withdrawal'
+                };
+
+                try {
+                    // Use a transaction to update both the wallet balance and transactions
+                    await runTransaction(db, async (transaction) => {
+                        // Add the new transaction
+                        const transactionsCollectionRef = collection(db, transactionsCollectionPath);
+                        await addDoc(transactionsCollectionRef, newTransaction);
+                        
+                        // Update the wallet balance
+                        const walletDocRef = doc(db, walletDocPath);
+                        const walletDoc = await transaction.get(walletDocRef);
+                        const currentBalance = walletDoc.exists() ? walletDoc.data().balance : 0;
+                        const newBalance = currentBalance + newTransaction.amount;
+                        transaction.set(walletDocRef, { balance: newBalance });
+                    });
+                } catch (error) {
+                    console.error("Error adding transaction or updating wallet:", error);
+                }
             }
         }
 
